@@ -109,8 +109,9 @@ class NoamOpt(object):
                 min(step ** (-0.5), step * self.warmup ** (-1.5)))
 
 def get_std_opt(model):
-    return NoamOpt(model.src_embed[0].d_model, 1, 4000,
+    return NoamOpt(model.src_embed[0].d_model, 1, 20,
                    torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+    # 400预热步数内线性增加学习速率 之后减小
 
 ##正则化
 class LabelSmoothing(nn.Module):
@@ -178,7 +179,6 @@ class data_utils():
     def process_training_data(self):
         self.training_data_code = []
         self.training_data_summary = []
-
         with open(self.train_path, "r") as f:
             all = [line.strip() for line in f.readlines()]
         all_dict = []
@@ -231,6 +231,11 @@ class data_utils():
                     word_list.append(self.new_vocab[w])
                 else:
                     word_list.append(self.unk_id)
+            if( len(word_list)<60 ):
+                word_list = list(word_list + [0] * (60 - len(word_list)))
+            else:
+                word_list=word_list[:60]
+            # print(word_list)
             self.training_data_code.append(word_list)
 
         for d in su:
@@ -240,20 +245,24 @@ class data_utils():
                     word_list.append(self.new_vocab[w])
                 else:
                     word_list.append(self.unk_id)
+            if (len(word_list) < 60):
+                word_list = list(word_list + [0] * (60 - len(word_list)))
+            else:
+                word_list = word_list[:60]
             self.training_data_summary.append(word_list)
 
         write_json(self.dict_path, self.new_vocab)
 
-    def data_load(self,batch_size):
-        data_size = len(self.training_data_code)
+    def data_load(self,input_data,output_data,batch_size):
+        data_size = len(input_data)
         num_batches= int((data_size  - 1) / batch_size) + 1
 
 
         for batch_num in range(num_batches):
             start_index = batch_num * batch_size
             end_index = min((batch_num + 1) * batch_size, data_size)
-            src = Variable(torch.from_numpy(self.boolean_indexing(self.training_data_code[start_index:end_index])).long(), requires_grad=False)
-            tgt = Variable(torch.from_numpy(self.boolean_indexing(self.training_data_summary[start_index:end_index])).long(), requires_grad=False)
+            src = Variable(torch.from_numpy(self.boolean_indexing(input_data[start_index:end_index])).long(), requires_grad=False)
+            tgt = Variable(torch.from_numpy(self.boolean_indexing(output_data[start_index:end_index])).long(), requires_grad=False)
             yield Batch(src, tgt, 0)
 
     def boolean_indexing(self,v):
@@ -263,7 +272,7 @@ class data_utils():
         out[mask] = np.concatenate(v)
         return out
 
-    def text2id(self, text, seq_length=1000):
+    def text2id(self, text, seq_length=60):
         vec = np.zeros([seq_length] ,dtype=np.int32)
         unknown = 0.
 

@@ -3,6 +3,8 @@ from utils import *
 import os
 import subprocess
 import random
+from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.bleu_score import SmoothingFunction
 
 class Solver():
     def __init__(self, args):
@@ -12,11 +14,11 @@ class Solver():
             os.makedirs(os.path.join(self.model_dir, 'code'))
 
         self.data_utils = data_utils(args)
-        # V=len(self.data_utils.new_vocab) #字典长度
-        V=2000
+        V=len(self.data_utils.new_vocab) #字典长度
+        # V=2000
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.criterion = LabelSmoothing(size=V, padding_idx=0, smoothing=0.1) #size为src_vocab
-        self.model = make_model(V,V,2)
+        self.model = make_model(V,V,6)
         self.model = self.model.to(self.device)
 
 
@@ -39,12 +41,31 @@ class Solver():
         # data_yielder = self.data_utils.train_data_yielder()
         # optim = torch.optim.Adam(self.model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
         # optim = BertAdam(self.model.parameters(), lr=1e-4)
-
+        with open(self.args.test_path, "r") as f:
+            all = [line.strip() for line in f.readlines()]
+        all_dict = []
+        for i in all:
+            all_dict.append(ast.literal_eval(i))
+        src_input=[]
+        src_output=[]
+        for x in all_dict:
+            src_input.append(self.data_utils.text2id(x.get("code").strip()))
+            src_output.append(self.data_utils.text2id(x.get("nl").strip()))
+        train_rec=[]
+        test_rec=[]
         for epoch in range(self.args.num_step):
             print("Epoch %d :" %(epoch))
             self.model.train()
-            run_epoch(self.data_utils.data_load(self.args.batch_size), self.model,
+            tr = run_epoch(self.data_utils.data_load(self.data_utils.training_data_code,self.data_utils.training_data_summary,self.args.batch_size), self.model,
                       SimpleLossCompute(self.model.generator, self.criterion, model_opt), self.device)
+            self.model.eval()
+            te = run_epoch(self.data_utils.data_load(src_input, src_output, self.args.batch_size), self.model,
+                            SimpleLossCompute(self.model.generator, self.criterion, None), self.device)
+            train_rec.append(tr)
+            test_rec.append(te)
+
+        write_json('./data/train_recorde.json', train_rec)
+        write_json('./data/test_recorde.json', test_rec)
 
 
         print('saving!!!!')
@@ -55,19 +76,43 @@ class Solver():
     def test(self, threshold=0.8):
         path = os.path.join(self.model_dir, 'model.pth')
         self.model.load_state_dict(torch.load(path)['state_dict'])
-        self.model.eval()
 
-        # with open(self.args.train_path, "r") as f:
-        #     all = [line.strip() for line in f.readlines()]
-        # all_dict = []
-        # for i in all:
-        #     all_dict.append(ast.literal_eval(i))
+        with open(self.args.train_path, "r") as f:
+            all = [line.strip() for line in f.readlines()]
+        all_dict = []
+        for i in all:
+            all_dict.append(ast.literal_eval(i))
+        print("ok")
+
+        # src_input=[]
+        # src_output=[]
+        # for x in all_dict:
+        #     src_input.append(self.data_utils.text2id(x.get("code").strip()))
+        #     src_output.append(self.data_utils.text2id(x.get("nl").strip()))
         #
+        # for epoch in range(1):
+        #     print("Epoch %d :" % (epoch))
+        #     self.model.eval()
+        #     print(run_epoch(self.data_utils.data_load(src_input,src_output,self.args.batch_size), self.model,
+        #                 SimpleLossCompute(self.model.generator, self.criterion, None), self.device))
 
-        # src = Variable(torch.from_numpy(np.expand_dims(self.data_utils.text2id(all_dict[0].get("code").strip()),axis=0)).long())
-        src = Variable(torch.LongTensor([[3, 6, 7, 8, 5, 6, 7, 8, 9, 10,12,0]]))
-        print(self.data_utils.id2sent([3, 6, 7, 8, 5, 6, 7, 8, 9, 10,12]))
-        src_mask = Variable(torch.ones(1, 1, 12)) #一个 一行11列的矩阵
-        res = greedy_decode(self.model, src, src_mask, max_len=15, start_symbol=1)#max_len为输出的语句长度
-        print(res)
-        print(self.data_utils.id2sent(np.squeeze(res.cpu().numpy())))
+        self.model.eval()
+        score_sum=0.
+        for x in all_dict:
+            # print(all_dict[23].get("code").strip())
+            src = Variable(torch.from_numpy(np.expand_dims(self.data_utils.text2id(x.get("code").strip()),axis=0)).long())
+            # print(src)
+
+            # print(self.data_utils.id2sent(self.data_utils.text2id(all_dict[23].get("code").strip())))
+            src_mask = Variable(torch.ones(1, 1, 60)) #一个 一行60列的矩阵
+            res = greedy_decode(self.model, src, src_mask, max_len=60, start_symbol=1)#max_len为输出的语句长度
+            # print(res)
+            candidate = self.data_utils.id2sent(np.squeeze(res.cpu().numpy())).split(' ')
+            seq = x.get("nl").strip().split(' ')
+            reference = []
+            reference.append(seq)
+            smooth = SmoothingFunction()  # 定义平滑函数对象
+            score = sentence_bleu(reference, candidate, weights=(0.25, 0.25, 0.25, 0.25),smoothing_function=smooth.method2)
+            print(score)
+            score_sum+=score
+        print(score_sum/len(all_dict))
