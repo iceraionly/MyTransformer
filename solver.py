@@ -77,7 +77,7 @@ class Solver():
         path = os.path.join(self.model_dir, 'model.pth')
         self.model.load_state_dict(torch.load(path)['state_dict'])
 
-        with open(self.args.train_path, "r") as f:
+        with open(self.args.test_path, "r") as f:
             all = [line.strip() for line in f.readlines()]
         all_dict = []
         for i in all:
