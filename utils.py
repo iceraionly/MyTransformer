@@ -43,14 +43,14 @@ def run_epoch(data_iter, model, loss_compute, device):
     total_loss = 0
     tokens = 0
     for i, batch in enumerate(data_iter):
-        print("i=",i)
+
         src = batch.src.to(device)
         trg = batch.trg.to(device)
         src_mask = batch.src_mask.to(device)
         trg_mask = batch.trg_mask.to(device)
         trg_y = batch.trg_y.to(device)
         ntokens = batch.ntokens.to(device)
-
+        # print(src)
         out = model.forward(src, trg, src_mask, trg_mask)
         loss = loss_compute(out, trg_y, ntokens)
 
@@ -118,7 +118,7 @@ class LabelSmoothing(nn.Module):
     "实现labelsmoothing."
     def __init__(self, size, padding_idx, smoothing=0.0):
         super(LabelSmoothing, self).__init__()
-        self.criterion = nn.KLDivLoss(size_average=False)
+        self.criterion = nn.KLDivLoss(reduction='sum')
         self.padding_idx = padding_idx
         self.confidence = 1.0 - smoothing
         self.smoothing = smoothing
@@ -238,14 +238,16 @@ class data_utils():
                     w = '[UNK]'
                     co_list.append(w)
                 else:
+
                     if w.strip() != "":
+
                         word_count[w] = word_count.get(w, 0) + 1
                         co_list.append(w)
             co_list = ['[CLS]'] + co_list
             co.append(co_list)
 
         for w in word_count:
-            if word_count[w] > 1:
+            if word_count[w] >= 1:
                 self.new_vocab[w] = len(self.new_vocab)
 
         for d in co:
@@ -338,7 +340,7 @@ class data_utils():
         for w in indices:
             if w != self.eos_id:
                 sent.append(self.index2word[w])
-
+                # print(sent)
         return ' '.join(sent)
 
 ##简单loss计算
@@ -357,8 +359,8 @@ class SimpleLossCompute(object):
         if self.opt is not None:
             self.opt.step()
             self.opt.optimizer.zero_grad()
-        # return loss * norm.float()
-        return (loss * norm).item()
+        return loss * norm.float()
+        # return (loss * norm).item()
 
 #贪心解码
 def greedy_decode(model, src, src_mask, max_len, start_symbol):
